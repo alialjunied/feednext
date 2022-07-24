@@ -1,0 +1,169 @@
+---
+# These are optional elements. Feel free to remove any of them.
+status: {proposed | rejected | accepted | deprecated | … | superseded by [ADR-0005](0005-example.md)}
+date: {YYYY-MM-DD when the decision was last updated}
+deciders: {list everyone involved in the decision}
+consulted: {list everyone whose opinions are sought (typically subject-matter experts); and with whom there is a two-way communication}
+informed: {list everyone who is kept up-to-date on progress; and with whom there is a one-way communication}
+---
+
+# 0001 - Break Service classes up into smaller files
+
+## Context and Problem Statement
+
+Service Classes in `/src/v1` are bloated.
+
+Here's some statistics on the Service Class fiels:
+
+| file                  | functions | lines |
+| --------------------- | --------- | ----- |
+| `user.service.ts`     | 12        | 200   |
+| `auth.service.ts`     | 8         | 193   |
+| `entry.service.ts`    | 10        | 133   |
+| `category.service.ts` | 7         | 94    |
+| `title.servcie.ts`    | 12        | 196   |
+
+While the project has folders like:
+
+- `v1/Category/Controller`
+
+  - indicating that we have endpoints which can called to do things on Category
+
+- `v1/Category/Service`:
+  - indicating that we can do stuff to the Category
+
+We do not know what it does with Category (creating? deleting? Adding a leaf category?) unless we look at the code.
+
+## Assumptions
+
+- Requirements are unstable and can change quickly since it is an early stage startup.
+- New features will be added as the product evolves.
+
+## Decision Drivers/Assumptions
+
+1. Service classes will grow without bounds as new features are added.
+
+   - There is a natural tendency to create new functions and avoid changing existing code especially if it looks intimidating (i.e a file with many functions and lines of code).
+   - When requirements are fluid and deadlines are tight, under pressure, engineers will continue to do what the codebase has always done, adding functions to an already bloated class.
+
+2. Service classes are tightly coupled with the delivery mechanism of the application (i.e. controlelrs)
+
+   - The controllers should be the class that decides how the data is serialized
+     - For now, it will be simply calling the `serializerService`
+
+## Decision Outcome
+
+Split each function in each service classes into individual classes/files.
+
+**Assumptions:**
+
+- Instead of having to define a `private readonly` attribute in the constructor of the `Controller`, we can simply import the service file in the controller.
+
+- If this is a requirement for by the `nestjs` framwork, then we would need to define attributes for each service the controller calls.
+
+### Positive Consequences
+
+- By just looking at the project directory, we can get a basic idea what application does.
+
+  - Each file can be thought of as a "unit of business logic" which assist the application to achieve a goal in the domain layer
+  - If a certain entity folder is growing faster than others, it would give us an indication to relook at the current
+
+- Easier time managing complexity
+
+  - Each class will have a single responsibility, which is to do what it's filename describes
+    - e.g. `CategoryShowService` would return a category entity provided with it's ID
+  - Adding new features will create new files
+
+- Improved engineering experience
+
+  - Less intimidating for new team members
+  - Easier to onboard engineers since files are small and less intimidating
+  - Less inertia for engineers to start implemeting features/fixing bugs
+  - Code reviews become efficient since only files that require change are reflected in the reviews.
+    - Less mental gymnastics for reviewers
+    - Less conflicts since each file does only one thing
+
+### Negative Consequences
+
+- Number of files will grow as much as the number features the application requires to handles.
+
+- Unnecessary boilerplate code for simple cases like `getCategory`
+
+- There will be possibilities where serveral services might have duplicate logic
+
+## More Information
+
+We will move each function in each service class into it's own class.
+
+To reduce the coupling of Services with the Delivery Mechanism of the application:
+
+- Services will return the entity
+- Controllers will call the `SerializerService`
+
+### Example Implementation
+
+We will use the `CategoryService.getCategory` as an example.
+
+1. Move the function `getCategory` from `category.service.ts` into another service class.
+
+Naming convention for Service class files:
+
+- `<entity-name>-<action>.service.ts`
+- `category-show.service.ts`
+
+```ts
+// server/src/v1/Category/Service/category-show.service.ts
+@Injectable()
+class CategoryShowService {
+  private validator: Validator;
+
+  constructor(
+    @InjectRepository(CategoriesRepository)
+    private readonly categoriesRepository: CategoriesRepository
+  ) {
+    this.validator = new Validator();
+  }
+
+  async execute(categoryId: string): Promise<ISerializeResponse> {
+    if (!this.validator.isMongoId(categoryId))
+      throw new BadRequestException("Id must be a type of MongoId");
+
+    const category: CategoriesEntity =
+      await this.categoriesRepository.getCategory(categoryId);
+
+    return serializerService.serializeResponse("category_detail", category);
+  }
+}
+```
+
+2. Update the controller to call the new service (i.e. `CategoryShowService`).
+
+```ts
+@ApiTags("v1/category")
+@Controller()
+export class CategoryController {
+
+  constructor(
+    // before
+    // private readonly categoryService: CategoryService
+
+    //after
+    private readonly categoryService: CategoryShowService;
+    // other services
+  ) {}
+
+  @Get(":categoryId")
+  getCategory(
+    @Param("categoryId") categoryId: string
+  ): Promise<ISerializeResponse> {
+    // before
+    // return this.categoryService.getCategory(categoryId)
+
+    // after
+    const category = this.showService.execute(categoryId);
+    return response;
+  }
+
+  //...
+}
+```
